@@ -1,0 +1,152 @@
+---
+title: "LinearModels(OLS,Elastic Net method,PLS)_Classification(Generalized Linear Model,LDA,QDA)"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r}
+library(lars)
+library(caret)
+library(elasticnet)
+library(mlbench)
+library(ISLR)
+library(rgenoud)
+library(RcppDE)
+library(glmpath)
+library(glmnet)
+```
+
+#1 Prediction with Linear Models
+
+```{r}
+#With communities and crime dataset, use three linear models to predict total number of violent crimes per 100K popuation (ViolentCrimesPerPop). The models are ordinary least squares model, elastic net method, and Partial Least Squares. I will check which model produces the lowest mean squared error.
+
+
+#Getting the original data
+ROOT <- "https://archive.ics.uci.edu/ml/machine-learning-databases/"
+crime <- read.csv(paste0(ROOT, "communities/communities.data"),
+header = FALSE, na.strings = "?")
+colnames(crime) <- read.table(paste0(ROOT, "communities/communities.names"), skip = 75, nrows = ncol(crime))[,2]
+
+#Checking summary of the data 
+#summary(crime)
+```
+
+```{r}
+#According to the summary of the data, more than twenty variables are mostly missing with 1675 NAs. I will remove all the variables that has NAs. 
+
+#Get rid of factor variables that are not necessary to predict the ViolentCrimesPerPop, such as "county", "community", and "fold". In particular, since all counties are within states, including both would create perfect collinearity.  
+
+crime <- na.omit(crime)
+library(dplyr)
+set.seed(20200101)
+crime <- select(crime, -county, -community, -fold, -communityname) %>%  select_if(~sum(is.na(.)) <= 1)
+
+```
+
+
+```{r}
+#data partition by state
+states <- as.character(sort(unique(crime$state)))
+in_train <- sapply(states, FUN = function(st) {
+  crime_st <- filter(crime, state == st)
+  if (nrow(crime_st) == 1) return(1L)
+  return(createDataPartition(y = crime_st$ViolentCrimesPerPop, p = 0.8, list = FALSE))
+})
+
+#names(in_train) <- states
+
+training <- bind_rows(lapply(states, FUN = function(st) {
+  crime_st <- filter(crime, state == st)
+  x <- in_train[[st]]
+  return(crime_st[x, , drop = FALSE])
+}))
+testing <- bind_rows(lapply(states, FUN = function(st){
+  crime_st <- filter(crime, state == st)
+  x <- in_train[[st]]
+  return(crime_st[-x, , drop = FALSE])
+}))
+```
+
+```{r}
+#Cross validation (split data into 10 as mutually exclusive and exhaustive subsets within the training data, so we can select the optimal values)
+ctrl <- trainControl(method = "cv", number = 10)
+```
+
+For OLS, it doesn't matter because there are no tuning parameters (actually caret considers whether there is an intercept to be a tuning parameter but by default it is included). For models with tuning parameters, 
+K-fold cross-validation is used within the training data in order to select the optimal values of the tuning parameters based on how they predict in the held-out fold, averaged across all the ways to hold out one fold. Then, we predict into the testing data using the optimal value of the tuning parameters and the optimal values of the coefficients in order to compare across supervised learning approaches.
+
+
+```{r}
+# 1) Start with OLS model, including all the variables that has not been removed.  
+ols <- train(ViolentCrimesPerPop ~ ., data = training, method = "lm", trControl = ctrl, preProcess = c("center", "scale"))
+y_hat <- predict(ols, newdata = testing)
+defaultSummary(data.frame(obs = testing$ViolentCrimesPerPop, pred = y_hat))
+```
+
+```{r}
+# 2) Elastic Net method. 
+elastic_net <- train(ViolentCrimesPerPop ~ ., data = training, method = "glmnet", trControl = ctrl, tuneLength = 10, preProcess = c("center", "scale"))
+y_hat2 <- predict(elastic_net, newdata = testing)
+defaultSummary(data.frame(obs = testing$ViolentCrimesPerPop, pred = y_hat2))
+```
+
+```{r}
+# 3) Partial Least Squares.
+pls_grid <- data.frame(.ncomp = 1:100)
+
+PLS <- train(ViolentCrimesPerPop ~., data = training, method = "pls", trControl = ctrl, tuneGrid = pls_grid, preProcess = c("center", "scale"))
+
+y_hat3 <- predict(PLS, newdata = testing)
+defaultSummary(data.frame(obs = testing$ViolentCrimesPerPop, pred = y_hat3))
+
+```
+
+Compared to the simple regression model with "lm" method, the Elastic-Net Regularized Generalized Linear Models with "glmnet" method produced the lower mean squared error, and the lowest one is with Partial Least Squares method. 
+
+
+#2 Classification of Binary Outcomes
+```{r}
+loans <- readRDS("loans.rds")
+loans$y <- factor(loans$y, labels = c("rejected", "approved"), levels = 0:1) 
+#loans$has_job <- as.factor(sign(loans$Employment.Length))
+set.seed(20200103)
+
+in_train2 <- createDataPartition(y = loans$y, p = 0.8, list = FALSE)
+training2 <- loans[ in_train2, ]
+testing2  <- loans[-in_train2, ]
+```
+
+```{r}
+#1. Binary classification via logistic regression (Generalized Linear Model)
+
+#The zipcode and State will be removed.
+
+logit <- glm(y~ Debt.To.Income.Ratio * Amount.Requested + Employment.Length, data = training2, family = binomial(link = "logit"))
+
+z <- predict(logit, newdata = testing2, type = "response") > 0.5
+z <- factor(z, levels = c(TRUE, FALSE), labels = c("approved", "rejected"))
+confusionMatrix(z, testing2$y)
+```
+
+```{r}
+# 2. Linear Discriminant Analysis (LDA)
+
+LDA <- train(y ~ Debt.To.Income.Ratio * Amount.Requested + Employment.Length, data = training2, method = "lda", preProcess = c("center", "scale"))
+
+z <- predict(LDA, newdata = testing2)
+confusionMatrix(z, testing2$y)
+```
+
+LDA performs better than the logit model bases on the accuracy. 
+
+```{r}
+# 3. Quadric Discriminant Analysis (QDA)
+QDA <- train(y ~ Debt.To.Income.Ratio * Amount.Requested + Employment.Length, data = training2, method = "qda", preProcess = c("center", "scale"))
+
+z <- predict(QDA, newdata= testing2)
+confusionMatrix(z, testing2$y)
+```
+
+QDA is the worse than the logit model and LDA based on the accuracy.

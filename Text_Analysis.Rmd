@@ -1,0 +1,167 @@
+---
+title: "Text Analysis"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+1 Johnson speeches
+```{r, warning = FALSE}
+#Use tm package to transform the dataset to a corpus.
+library(tm)
+corpus_raw <- Corpus(DirSource(directory = "Speeches_May_1967"))
+corpus_raw
+
+#text processing: I normalized the texts using pre-processing steps, including switching to lower case, removing extra whitespaces, punctuations, numbers, and stopwords, and getting to words' root by stemDocument function. 
+corpus <- tm_map(corpus_raw, content_transformer(tolower))
+corpus <- tm_map(corpus, stripWhitespace) 
+corpus <- tm_map(corpus, removePunctuation)
+corpus <- tm_map(corpus, removeNumbers)
+corpus <- tm_map(corpus, removeWords, stopwords("english"))
+corpus <- tm_map(corpus, stemDocument)
+
+#Data Exploration with WordCloud
+library(wordcloud)
+wordcloud(corpus, min.freq = 20, random.order = FALSE, colors = brewer.pal(8, "Dark2"))
+```
+
+```{r}
+#Use DocumentTermMatrix to make documents as the rows, words as the columns, and the frequency of the word as the entries. 
+library(topicmodels)
+library(dplyr)
+library(tidytext)
+dtm <- DocumentTermMatrix(corpus)
+
+dtm.mat <- as.matrix(dtm)
+library(Matrix)
+dtm.Mat <- sparseMatrix(dtm$i, dtm$j, x = dtm$v, dims = c(dtm$nrow, dtm$ncol), dimnames = dtm$dimnames)
+dtm.Mat[1:20, 1:6]
+```
+
+```{r}
+#Run Latent Dirichlet Allocation function to find latent topics within the corpus. 
+lda_out <- LDA(dtm, k = 3, control = list(seed = 20191229))
+terms(lda_out, 5)
+```
+
+```{r}
+#Turn the model into a one-topic-per-term-per-row format. Beta shows the probability of that term being generated from that topic. 
+
+JS_topics <- tidy(lda_out, matrix = "beta")
+JS_topics
+```
+
+```{r}
+#Use top_n to find the top 10 terms for each topic.
+
+top_terms <- JS_topics %>% group_by(topic) %>% top_n(10, beta) %>% ungroup() %>% arrange(desc(beta))
+
+top_terms
+```
+
+```{r}
+#Visualization
+library(ggplot2)
+top_terms %>% mutate(term = reorder_within(term, beta, topic)) %>% ggplot(aes(term, beta, fill = topic)) + geom_bar(stat = "identity") + scale_x_reordered() + facet_wrap(~ topic, scales = "free") + coord_flip()
+?facet_grid
+```
+
+#Based on the visualization, the first cluster could be about government's campaign for americans in each state. The second cluster might be about helping americans have jobs by education program. The third cluster may be about the president's speech about what people and states can do this year to solve problems.
+
+
+2 Analysis of tweets
+```{r}
+#Drop unneccesary columns and filter if retweet_count is NA.
+library(readr)
+tweets <- readr::read_csv("tweets.csv")
+users <- readr::read_csv("users.csv")
+
+tweets <- select(tweets, -created_at, -retweeted, -posted) %>% filter(!is.na(retweet_count))
+```
+
+```{r}
+#Rename "id" column in users data.frame to "user_id" and Leftjoin tweets data.frame on "user_id". 
+
+combine <- users %>% rename(user_id = id) %>% left_join(tweets, ., "user_id")
+head(combine)
+```
+
+```{r}
+#Put hashtags into a tidy format, because some tweets have multiple hashtags or no hashtags. 
+
+tidytext::unnest_tokens(combine, output = hashtag, input = "hashtags")
+```
+
+```{r}
+#text pre-processing
+
+corpus_raw2 <- Corpus(VectorSource(combine$hashtags))
+corpus2 <- tm_map(corpus_raw2, content_transformer(tolower))
+corpus2 <- tm_map(corpus2, stemDocument)
+corpu2s <- tm_map(corpus2, FUN = function(x) gsub(",", " ", x, fixed = TRUE))
+dtm2 <- DocumentTermMatrix(corpus2)
+tidycorpus <- tidy(dtm2)
+tidycorpus
+
+```
+
+```{r}
+#Measure how important a word is in the corpus by Term Frequency - Inverse Document Frequency
+
+tidycorpus <- tidycorpus %>% unnest_tokens(., word, term, token = "words") 
+
+tidycorpus <- tidycorpus %>% bind_tf_idf(., word, document, count) %>% arrange(desc(tf_idf)) %>% top_n(10)
+
+tidycorpus
+```
+
+#Many words, more than 10, can all be considered within the top10 with 10.16173 tf_idf. 
+
+
+3 Preambles of Constitutions
+```{r}
+data("constitution", package = "qss")
+
+constitution$country_year <- paste(constitution$country, constitution$year, sep = "_")
+
+head(constitution)
+```
+
+```{r}
+#Make it as one row per word rather than one row per preamble, by using tidytext package. 
+tidydf <- constitution %>% unnest_tokens(output = "word", input = "preamble")
+head(tidydf)
+```
+
+```{r}
+#Eliminate English "stop words" from tidydf.
+newdf <- tidydf %>% anti_join(stop_words)
+head(newdf)
+```
+
+```{r}
+#The number of words that are left after the stop words have been removed. 
+n_distinct(newdf$word)
+```
+
+```{r}
+#Count up all of the times that a word appears in each constitution's preamble. 
+
+tidy_counts <- group_by(newdf, country_year, word) %>% summarize(count = n())
+
+tidy_counts
+```
+
+```{r}
+#Create a document-term matrix
+DTM <- tidy_counts %>% cast_dtm(country_year, word, count)
+```
+
+```{r}
+#Check what constitutions are in the same cluster by executing hierarchical clustering on the document-term matrix. 
+
+cluster <- cutree(hclust(dist(DTM), method = "average"), k = 5)
+cluster
+```
+
+#Almost all the observations fell into the same cluster. 

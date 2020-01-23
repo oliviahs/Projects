@@ -1,0 +1,80 @@
+---
+title: "Predictive Modeling of Graduation Rate using U.S. News and World Report’s College data"
+output:
+  pdf_document: default
+  html_document: default
+---
+```{r}
+library(dplyr)
+library(earth)
+library(dbarts)
+library(e1071)
+library(splines)
+library(ISLR)
+set.seed(20200103)
+```
+
+1) Predictive Modeling of Graduation Rate using U.S. News and World Report’s College data
+
+```{r}
+library(caret)
+#The data is statistics for a large number of US Colleges from the 1995 issue of US News and World Report. The dependent variable is Outstate, Out-of-state tuition. 
+data(College, package = "ISLR")
+set.seed(20200103)
+View(College)
+help(College)
+
+```
+
+```{r}
+#Split the observation into training and testing using createDataParition function. 
+in_train <- createDataPartition(College$Outstate, p = 0.8, list = FALSE)
+training <- College[in_train, ]
+testing <- College[-in_train, ]
+
+
+#1. OLS that includes all predictors, their pairwise interactions, and quadradic terms for continuous variables. 
+initial_model <- lm(Outstate ~(.)^2 + I(Apps^2) + I(Accept^2) + I(Enroll^2) + I(Top10perc^2) + I(F.Undergrad^2) + I(P.Undergrad^2) + I(Room.Board^2) + I(Books^2) + I(Personal^2) + I(PhD^2) + I(Terminal^2) + I(S.F.Ratio^2) + I(perc.alumni^2) + I(Expend^2) + I(Grad.Rate^2), data = training)
+
+```
+
+```{r}
+#The initial model is likely to cause overfitting problem and so predict poorly in the testing data. 
+
+#Use step function to rank the models by Aikaike Information Criterion and return the stepwise-selected model. The lowest AIC is expected to predict best outside the training data. 
+
+modelAIC <- step(initial_model, trace = FALSE)
+names(coef(modelAIC))
+```
+
+```{r}
+#Then, predict in the testing data. 
+Yhat_modelAIC <- predict(modelAIC, newdata = testing)
+```
+
+```{r}
+#Get Root Mean Square Error.
+defaultSummary(data.frame(obs = testing$Outstate, pred = Yhat_modelAIC))
+```
+
+```{r}
+# 2. Generalized Additive Model
+library(gam)
+GAM <- gam(Outstate ~ s(Apps, df = 4) + s(Accept, df = 4) + s(Enroll, df = 4) + s(Top10perc, df = 4) + s(Top25perc, df = 4) + s(F.Undergrad, df = 4) + s(P.Undergrad, df = 4) + s(Room.Board, df = 4) + s(Books, df = 4) + s(Personal, df = 4) + s(PhD, df = 4) + s(Terminal, df = 4) + s(S.F.Ratio, df = 4) + s(perc.alumni, df = 4) + s(Expend, df = 4) + s(Grad.Rate, df = 4) + Private, data = training)
+
+#See how each smooth function changes as the corresponding predictor changes and get a sense of how well the model fits. 
+plot(GAM, se = FALSE, residuals = TRUE, pch = ".", las = 1, rug = FALSE)
+
+```
+
+```{r}
+Yhat_gam <- predict(GAM, newdata = testing)
+defaultSummary(data.frame(obs = testing$Outstate, pred = Yhat_gam))
+```
+
+#RMSE is smaller in GAM model than in the linear model, though not by that much because each relationship are not too non-linear as the plots shows.  
+
+
+
+
+

@@ -1,0 +1,64 @@
+---
+title: "SQL_General_Social_Survey"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r}
+library(gsubfn)
+library(proto)
+library(RSQLite)
+library(readr)
+library(sqldf)
+#install.packages("XQuartz")
+```
+
+```{r}
+setwd("/Users/oliviashin/Desktop/Courses/SQL/")
+gss <- read.csv("GSS.2006.csv\ copy.xls") 
+```
+
+Analyzing age, id, region, sibs, childs, marital, wordsum, educ, realinc variables in GSS.
+
+```{r}
+z <- gss[ , c( "age","id", "region", "sibs", "childs", "marital", "wordsum", "educ", "realinc")]
+```
+
+```{r}
+# 1. The age of person who has ID 1.
+sqldf("SELECT age, id FROM z WHERE id =1")
+```
+
+```{r}
+# 2. The age of all the people with IDs between 1 and 50
+sqldf("SELECT age, id FROM z WHERE id BETWEEN 1 AND 50")
+```
+
+```{r}
+# 3. The number of respondents that were interviewed in each region.
+
+sqldf("SELECT region, COUNT(*) AS size FROM z GROUP BY region")
+```
+
+```{r}
+# 4. The average of respondents in each region.
+
+sqldf("SELECT region, AVG(age) AS average_age FROM z GROUP BY region")
+```
+
+```{r}
+# 5. IDs of all people who are older than 80 years old and have exactly 20 years of education. 
+
+sqldf("SELECT id FROM z WHERE age >= 80 AND educ = 20")
+```
+
+```{r}
+# 6. The total number of people 
+sqldf("SELECT COUNT(id) FROM z")
+```
+
+```{r}
+# 7. The average number of children that people have among those who are married.
+sqldf("SELECT marital, AVG(childs) AS ave_childs FROM z WHERE marital = 1")
+```

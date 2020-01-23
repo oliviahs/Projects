@@ -1,0 +1,157 @@
+---
+title: "Tree-Based Models(RandomForest, Bagging, Boosting, Bayesian Additive Regression Trees), Neural Networks"
+output: html_document
+---
+
+```{r}
+library(dplyr)
+library(earth)
+library(dbarts)
+library(e1071)
+library(splines)
+library(ISLR)
+library(caret)
+set.seed(20200103)
+```
+
+
+1 Tree-Based Models for a Binary Outcome
+```{r}
+#The payback data is about people who were given personal loans and the question is whether the loan was paid back on time or not.
+
+payback <- readRDS("payback.rds")
+set.seed(20200103)
+#View(payback)
+summary(payback)
+#str(payback)
+```
+
+```{r}
+#remove observations with NAs.
+payback <- na.omit(payback)
+
+#Coerce some variables into factors. 
+payback$y <- factor(payback$y, levels = 0:1, labels = c("no", "yes"))
+payback$delinq_2yrs <- factor(payback$delinq_2yrs, levels = 0:2, labels = c("0", "1", "2"))
+#payback$home_ownership <- factor(payback$home_ownership)
+
+#Drop zipcode and state variables, which are unlikley to add much predictive power to the model. 
+payback$zip_code <- NULL
+payback$addr_state <- NULL
+
+```
+
+```{r}
+#split the data into trainng and testing. 
+#To make solving the optimization go faster, split it into half in each. 
+train <- createDataPartition(payback$y, p = 0.5, list = FALSE)
+training2 <- payback[train, ]
+testing2 <- payback[-train, ]
+```
+
+```{r}
+#1) A logit model
+
+#Include all predictors, with pairwise interactions and quadratic terms for each numeric variables. 
+logit <- glm(y ~ (.)^2 + I(loan_amnt^2) + I(int_rate^2) + I(installment^2) + I(emp_length^2) + I(annual_inc^2) + I(earliest_cr_line^2) + I(open_acc^2) + I(pub_rec^2) + I(revol_bal^2) + I(total_acc^2), data = training2, family = binomial(link = "logit"))
+```
+
+```{r}
+#chose type = "response" option to output probabilities of the form P(Y = 1|X)
+confusionMatrix(factor(predict(logit, newdata = testing2, type = "response") > 0.5, levels = c(FALSE, TRUE), labels = c("no", "yes")), testing2$y)
+```
+
+```{r}
+#2) Tree-based model : Single Tree
+single_tree <- train(y ~ ., data = training2, method = "rpart", tuneLength = 10, na.action = na.omit)
+
+confusionMatrix(predict(single_tree, newdata = testing2, na.action = na.pass), testing2$y)
+```
+
+```{r}
+#3) Random Forest
+ctrl <- trainControl(method = "cv", number = 10)
+
+rf_grid <- data.frame(.mtry = 2:(ncol(training2) - 1L))
+
+RF <- train(y ~., data = training2, method = "rf", ntrees = 1000, trControl = ctrl, tuneGrid = rf_Grid, na.action = na.omit)
+
+confusionMatrix(predict(rf, newdata = testing2, na.action = na.pass), testing2$y)
+
+```
+
+```{r}
+#4) Bagging
+BAG <- train(y ~ ., data = training2, method = "treebag", na.action = na.omit, trControl = ctrl)
+
+confusionMatrix(predict(BAG, newdata = testing2, na.action = na.pass), testing2$y)
+```
+
+```{r}
+#5) Boosting, with tuning parameters (number of iterations, complexity of the tree, learning rate, minimum number of training set samples in a node for splitting)
+library(gbm)
+gbm_grid <- expand.grid(.interaction.depth = 1:5, 
+                        .n.trees = 1000,
+                        .shrinkage = c(0.01, 0.1),
+                        .n.minobsinnode = 5)
+
+BOOST <- train(y ~ ., data = training2, method = "gbm", trControl = ctrl, tuneGrid = gbm_grid, verbose = FALSE, na.action = na.omit)
+
+confusionMatrix(predict(BOOST, newdata = training2, na.action = na.pass), testing2$y)
+```
+
+```{r}
+# Bayesian Additive Regression Trees
+training2 <- na.omit(training2)
+testing2 <- na.omit(testing2)
+
+BART <- bart2(as.numeric(y) ~ ., data = training2, test = testing2)
+
+confusionMatrix(factor(colMeans(pnorm(BART$yhat.test))> 0.5, levels = c(FALSE, TRUE), labels = levels(testing2$y)), testing2$y)
+```
+
+#Boosting yielded the highest accuracy.
+
+
+2 Neural Networks vs. Generalized Additive Models
+
+```{r}
+#Load data about orange juice
+data("OJ", package = "ISLR")
+help(OJ)
+OJ <- na.omit(OJ)
+```
+
+```{r}
+OJ <- subset(OJ, select=-c(StoreID, Store7, STORE))
+
+in_train3 <- createDataPartition(OJ$Purchase, p = 0.8, list = FALSE)
+training3 <- OJ[in_train3, ]
+testing3 <- OJ[-in_train3, ]
+```
+
+```{r}
+#1) Neural Network Model
+nnetGrid <- expand.grid(.decay = c(0, 0.01, .1), .size = c(1:10))
+ctrl <- trainControl(method = "cv", number = 10)
+nntrain <- train(Purchase ~ ., data = training3, method = "nnet", trControl = ctrl, 
+                 tuneGrid = nnetGrid, preProcess = c("center", "scale"), trace = FALSE)
+```
+
+```{r}
+defaultSummary(data.frame(obs = testing3$Purchase, pred = predict(nntrain, newdata = testing3)))
+```
+
+```{r}
+#2) MARS(Multivariate adaptive regression spline)
+ctrl <- trainControl("cv", number = 10)
+
+marsGrid <- expand.grid(.degree = 1:3, .nprune = 1:10)
+MARS <- train(Purchase ~ ., data = training3, method = "earth", trControl = ctrl, tuneGrid = marsGrid)
+```
+
+```{r}
+defaultSummary(data.frame(obs = testing3$Purchase, pred = predict(MARS, newdata = testing3)))
+```
+
+#neural network Model yields a higher accuracy than MARS model. 

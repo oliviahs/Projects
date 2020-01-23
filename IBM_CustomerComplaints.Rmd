@@ -1,0 +1,487 @@
+---
+title: "Sentiment Analysis and Classification of Customer Complaints from IBM"
+author: "Hyunyoung Shin, Dayeon Kim"
+date: "12/19/2019"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Final Project 
+## Hyunyoung Shin(hs3158), Dayeon Kim(dk3115)
+
+
+# Introduction
+
+For our final project, we decided to conduct text analysis and sentiment analysis on the Consumer Complaints dataset from IBM. The dataset involves various consumer complaints received by financial corporations, and are grouped by different product categories and sub-issues. We will be focusing on the 'Consumer Complaints Narrative' column that contains a text narrative of the actual complaints that the consumers submitted. We combined sentiment analysis data with geographical data to explore if certain regions of the country demonstrated higher levels of consumer dissastisfaction, and we also conducted topic modeling with the Latent Dirichlet Allocation method to see if through the narratives we can predict which product category each narrative should be assigned to. The goal of this project is to deliver useful business insights for IBM and companies involved. 
+
+
+```{r}
+
+library(textdata)
+library(ggplot2)
+library(pacman)
+p_load(caret,
+       dplyr, 
+       ggplot2, 
+       kableExtra,
+       stringr,
+       tidytext,
+       tidyr,
+       tm,
+       topicmodels,
+       wordcloud)
+
+```
+# Loading Data 
+```{r}
+test <-  read.csv("Consumer_Complaints.csv", header=T, na.strings=c(""))
+df <- test[!is.na(test$Consumer.complaint.narrative),]
+nrow(test)
+```
+```{r}
+nrow(df)
+```
+Because we will be conducting text analysis on the 'Consumer Complaint Narrative' 
+column, we started out by removing rows that have NAs in the column. The initial 
+dataset had 1397780 observations, but after removing th NAs from the column we 
+had 445,931 observations. 
+
+```{r}
+complaint <- subset(df[1:25000,]) 
+```
+We thought that still the dataset with 445,931 observations was too large to conduct 
+text analysis, so we got a sample dataset with 25,000 observations using the subset 
+function. 
+
+```{r}
+head(complaint)
+```
+
+```{r}
+names(complaint)[names(complaint) == 'Consumer.complaint.narrative'] <- 'Narrative'
+colnames(complaint)
+```
+Because the column name 'Consumer.complaint.narrative' was too complicated, 
+we renamed it to "Narrative"
+
+# Converting the "Narrative" column to character
+
+The "narrative" format was originally factor. But in order to apply text analysis, 
+the column should be in character format, so we converted it to character. 
+```{r}
+complaint$Narrative <- as.character(complaint$Narrative)
+
+```
+
+# Tokenizing Narrative Text
+```{r}
+tidy_complaint <- unnest_tokens(complaint, output = "word", input = "Narrative")
+tidy_complaint <- anti_join(tidy_complaint, stop_words) 
+test <- tidy_complaint$word 
+#removing "xxxx" from the narrative column 
+edit <- str_replace_all(string = test, pattern = "[xxxx]", replacement = "") 
+edit <- str_squish(edit)
+tidy_complaint$word <- edit
+```
+
+We tokenized the narrative column using the "unnest_tokens" function, and removed stop words. 
+The new column with tokenized text is named "word". Also, many of the complaints involved "xxxx",
+which does not have any useful meaning, so we removed "xxxx". 
+
+# Wordcloud 
+```{r}
+library(wordcloud)
+
+tidy_complaint %>%
+  count(word) %>%
+  with(wordcloud(word, n, max.words = 100, colors = brewer.pal(8, "Dark2")))
+?wordcloud
+```
+
+To get a general idea on which words appear frequently in the narrative column, we created a wordcloud. 
+
+# Sentiment Analysis with Afinn & NRC
+
+```{r}
+library(textdata)
+afinn <- get_sentiments("afinn")
+head(afinn)
+nrc <- get_sentiments("nrc")
+head(nrc)
+```
+
+For our sentiment analysis on the narrative column, we decided to use a dictionary approach, 
+and selected Afinn and NRC. We wanted to assign a "negative sentiment score" to each complaint narrative, 
+and because Afinn is a lexicon of English words rated for valence with an integer between -5 and 5, 
+we thought it was the most suitable dictionary to use. Also, NRC dictionary inclues 8 different categories
+of emotions instead of the binary distinction between positive and negative, so we decided to try with 
+NRC to see if the complaints showed specific negative emotions such as "anger". 
+
+```{r}
+##compare rich and poor
+library(ggplot2)
+
+rich <- filter(tidy_complaint, State == "NY" | State == "CA")
+
+rich <- rich %>%
+    inner_join(nrc, by = "word") %>% inner_join(afinn, by = "word") %>% group_by(State, sentiment) %>% summarise(score = mean(value))
+
+graph_rich <- ggplot(rich, aes(sentiment, score)) + geom_col(show.legend = FALSE) + 
+  facet_wrap(~State, ncol = 1, scales = "free") + labs(x = NULL)
+
+graph_rich
+```
+
+```{r}
+poor <- filter(tidy_complaint, State == "WV" | State == "MS")
+poor <- poor %>%
+    inner_join(nrc, by = "word") %>% inner_join(afinn, by = "word") %>% group_by(State, sentiment) %>% summarise(score = mean(value))
+graph_poor <- ggplot(poor, aes(sentiment, score)) + geom_col(show.legend = FALSE) + 
+  facet_wrap(~State, ncol = 1, scales = "free") + labs(x = NULL)
+
+graph_poor
+```
+
+We combined 3 data frames - afinn, nrc, tidy_complaint to see the different emotions in the NRC dicionary shown in the narratives,
+and their valence defined by Afinn. We wanted to see if different income levels of different states had an impact on the sentiment of the 
+narratives, so we compared the sentiment analysis of the two richest states, New York and California, and the two poorest states, 
+Mississippi and West Virginia. We compared the mean sentiment score of different emotions represented in the complaints submitted 
+in the four states, but unfortunately we were unable to find a pattern between income level and sentiment. All 4 states showed higher levels
+of anger and disgust. 
+
+## Combining Afinn and the Complaint Data Frame 
+```{r}
+complaint_afinn <- inner_join(tidy_complaint, afinn)
+head(complaint_afinn)
+```
+
+Using left_join function, we combined the afinn data frame and the new complaint data frame with tokenized narrative so that each word 
+in the narrative was assigned a valence. 
+
+# Negative Sentiment Score by State 
+```{r}
+state_sentiment <- group_by(complaint_afinn, State) %>% summarize(score = mean(value, na.rm = TRUE))
+state_sentiment
+```
+
+```{r}
+arrange(state_sentiment, score)
+```
+
+Using the "group_by" and "summarize" function, we computed the mean negative sentiment 
+score by state. It turned out that out of the 50 states, North Dakota showed the highest score
+of negative sentiment. 
+
+# Visualizing Negative Sentiment Score by State 
+
+We decided to visualize the negative sentiment score on a US map. 
+In order to do so, we loaded R's maps package, which provides us with some pre-drawn map data. 
+```{r}
+library(maps)
+us_states <- map_data("state")
+head(us_states)
+```
+
+In order to get our own negative sentiment by state data on the map, we need to first merge
+the two data frames (map dataframe and our own data frame) together. For two data frames to 
+merge, we need to have a column of variables that exactly correspond to one another. 
+However, while the "maps" data frame lists states in their full name, our data frame used
+abbreviations. The function below is simply converting the state abbreviations into their 
+full names in order to have exactly matching variables. 
+
+```{r}
+ #'x' is the column of a data.frame that holds 2 digit state codes
+stateFromLower <-function(x) {
+   #read 52 state codes into local variable [includes DC (Washington D.C. and PR (Puerto Rico)]
+  st.codes<-data.frame(
+                      state=as.factor(c("AK", "AL", "AR", "AZ", "CA", "CO", "CT", "DC", "DE", "FL", "GA",
+                                         "HI", "IA", "ID", "IL", "IN", "KS", "KY", "LA", "MA", "MD", "ME",
+                                         "MI", "MN", "MO", "MS",  "MT", "NC", "ND", "NE", "NH", "NJ", "NM",
+                                         "NV", "NY", "OH", "OK", "OR", "PA", "PR", "RI", "SC", "SD", "TN",
+                                         "TX", "UT", "VA", "VT", "WA", "WI", "WV", "WY")),
+                      full=as.factor(c("alaska","alabama","arkansas","arizona","california","colorado",
+                                       "connecticut","district of columbia","delaware","florida","georgia",
+                                       "hawaii","iowa","idaho","illinois","indiana","kansas","kentucky",
+                                       "louisiana","massachusetts","maryland","maine","michigan","minnesota",
+                                       "missouri","mississippi","montana","north carolina","north dakota",
+                                       "nebraska","new hampshire","new jersey","new mexico","nevada",
+                                       "new york","ohio","oklahoma","oregon","pennsylvania","puerto rico",
+                                       "rhode island","south carolina","south dakota","tennessee","texas",
+                                       "utah","virginia","vermont","washington","wisconsin",
+                                       "west virginia","wyoming"))
+                       )
+     #create an nx1 data.frame of state codes from source column
+  st.x<-data.frame(state=x)
+     #match source codes with codes from 'st.codes' local variable and use to return the full state name
+  refac.x<-st.codes$full[match(st.x$state,st.codes$state)]
+     #return the full state names in the same order in which they appeared in the original source
+  return(refac.x)
+ 
+}
+```
+
+```{r}
+state_sentiment$State <- stateFromLower(state_sentiment$State)
+```
+
+Through the code above, we are replacing the State column with full state name variables. 
+
+```{r}
+head(state_sentiment)
+```
+
+```{r}
+state_sentiment <- na.omit(state_sentiment)
+head(state_sentiment)
+```
+
+In order to combine two data frames using the left join function, we need to have the combining
+column with the mathching name. We are simply changing the column name "State" into "region", 
+as the maps dataframe has "region" as its column name. 
+```{r}
+names(state_sentiment)[names(state_sentiment) == 'State'] <- 'region'
+head(state_sentiment)
+```
+
+Now, we are combining the two data frames using left join. 
+```{r}
+sentiment_combined <- left_join(us_states, state_sentiment)
+```
+```{r}
+head(sentiment_combined)
+```
+
+# GGplot to Create a Map Visualization
+```{r}
+library(mapproj)
+p0 <- ggplot(data = sentiment_combined,
+             mapping = aes(x = long, y = lat, group = group, fill = score))
+p1 <- p0 + geom_polygon(color = "gray90", size = 0.1) + 
+  coord_map(projection = "albers", lat0 = 39, lat1 = 45) + 
+  labs(title = "Negative Sentiment Score by State")
+p1
+```
+
+The map above shows that states are colored with densities depending on the negative sentiment score; states with higher negative sentiment score is colored more darkly. As our results showed, North Dakota (negative sentiment score of -1.23) has the darkest color, whereas states like Montana (-0.39) and Wyoming(-0.53) with low negative sentiment score were colored lightly. To IBM, this map can provide useful insights about how certain states are showing higher consumer dissatisfaction, and if negative sentiments are associated with issue urgency, complaints that are more urgent. Using this map data, IBM could look into whether CX resources are handled efficiently in states that showed higher negative sentiments. 
+
+# Negative Sentiment Score by Product 
+```{r}
+product_sentiment <- group_by(complaint_afinn, Product) %>% summarize(score = mean(value, na.rm = TRUE))
+k <- arrange(product_sentiment, score)
+k
+```
+
+We also computed the mean negative sentiment score by product category. 
+Results showed that complaints for "checking or savings account" and "debt collection" showed the highest negative sentiments, whereas those for "student loan" and "mortgage" showed lower negative sentiments. 
+
+# Negative Sentiment by Company 
+```{r}
+company_sentiment <- group_by(complaint_afinn, Company) %>% summarize(score = mean(value, na.rm = TRUE))
+com <- arrange(company_sentiment, score)
+com
+```
+
+We attained the mean negative sentiment score by company. According to the results, the top three companies with the highest consumer dissatisfaction turned out to be Affiliates Management Company, BCG Equities, and Data Check of America. Insights like this one can suggest which companies are handling consumer experiences better or worse than their competitors. 
+
+# Topic Modeling with LDA 
+
+We subsetted a sample in order to apply LDA. Also, many complaints in the "Narrative" column included "xxxx" which does not have useful meaning, so we removed "xxxx" from the tokenized complaint data frame "tidy_complaint". 
+
+```{r}
+small_complaint <- tidy_complaint[1:1000, ]
+
+test <- small_complaint$word 
+edit <- str_replace_all(string = test, pattern = "[xxxx]", replacement = "")
+edit <- str_squish(edit)
+```
+
+```{r}
+Narrative_Corpus <- VCorpus(VectorSource(edit))
+text_dm <- DocumentTermMatrix(Narrative_Corpus)
+```
+
+```{r}
+rowtotal <- apply(text_dm, 1, sum) #Find the sum of words in each Document
+dtm_new <- text_dm[rowtotal > 0, ] #remove all docs without words
+lda <- LDA(dtm_new, k = 5, control = list(seed = 1234))
+topics <- tidy(lda, matrix = "beta")
+topics
+```
+
+In order to conduct topic modeling, we first put the narrative column to be included in the corpus, 
+then we created a document term matrix that has one row for each document (or complaint in this case) 
+in the corpus, one column for each word, and cell for the frequency of words that appear in the document. 
+We then applied the LDA approach to see the probability that each word was generated by one of the 5 topics. 
+
+```{r}
+top <- topics %>% group_by(topic) %>% top_n(10, beta) %>% ungroup() %>% arrange(topic, -beta)
+top %>% mutate(term = reorder(term, beta)) %>% ggplot(aes(term, beta, fill = factor(topic))) + 
+  geom_col(show.legend = FALSE) + facet_wrap(~ topic, scales = "free") + coord_flip()
+```
+
+We then created a plot to see the top 10 words with the highest probabilities to fall into each of the 
+5 topics. From the plot above, we were able to link some of the topics to the product categories. 
+For example, in topic 2, top ten words with the highest beta included "credit", "date", "due", and "fraud", suggesting it is potentially related to the "Credit Card" product category. Similarly, topic 3 has "debt" with the highest probability that the word falls into that topic, suggesting that topic 3 is likely related to the product category "Deby collection". Lastly, for topic 4, it includes words such as "reported" and "reporting", which is not so much included in other topics. This can mean that narratives that are included in topic 4 are likely to be related to the product category "Credit reporting, credit repair services, or other personal consumer reports". In this way, we thought that through utilizing the LDA approach, we can classify the complaint narratives into topics, which can then be used to predict which product category the complaint should be assigned to, by looking at the words with high relevance to each category. This led us to think that if a machine learning classifier model can be used to classify narratives into product categories, it can streamline the logistical procedures for handling customer complaints. 
+
+# Predicting Product Category from Narratives using Machine Learning Classification Models 
+
+```{r}
+#check the names of products to pick up two products to predict.
+unique(complaint$Product)
+```
+
+Because there were many types of product categories, for the efficiency of model creation we decided to select two product categories to predict if the narratives fall into any of the two categories. We selected "Checking or savings account" and "Mortgage", and ran models to see if the narratives can be assigned to either one.  
+
+```{r}
+#create a dataframe for dtm and machinelearning
+V_df <- complaint %>% select(Product, Narrative) %>% 
+  filter(Product == "Checking or savings account" | Product == "Mortgage") %>%
+  mutate(Product = ifelse(Product == "Checking or savings account", 1, 0)) %>% 
+  mutate(Product = factor(Product, levels = 1:0, labels = c("C_S", "M")))
+#Product == "Checking or savings account" is 1, named "C_S" and Product == "Mortgage" is 0, named "M"
+
+#make Narrative column as Vector to put it in the VectorSource
+V_df_Narrative <- as.vector(V_df$Narrative)
+```
+
+In order to run a classification model, we first need to create a new dataframe that includes the narrative columnand the column that shows if the complaint narrative was assigned to either "Checking or Savings account" (labeled as "C_S"), or "Mortgage" (labeled as "M"). After creating a new data frame, we converted the narrative column into vector class in order to apply the VectorSource function. 
+
+```{r}
+#create a raw corpus for Narrative column using VectorSource
+raw_corpus <- Corpus(VectorSource(V_df_Narrative))
+```
+
+Using the VectorSource function, we put the Narrative column in the new data frame created above into a corpus, which we will thenmake it into a document term matrix. 
+
+```{r}
+#to remove xxxx
+subSpace <- content_transformer(function(x, pattern) gsub(pattern, " ", x))
+
+#cleaning the raw_corpus
+corpus <- tm_map(raw_corpus, subSpace, "x")
+corpus <- tm_map(corpus, content_transformer(tolower))
+corpus <- tm_map(corpus, stripWhitespace) 
+corpus <- tm_map(corpus, removePunctuation)
+corpus <- tm_map(corpus, removeNumbers)
+corpus <- tm_map(corpus, removeWords, stopwords("english"))
+corpus <- tm_map(corpus, stemDocument)
+```
+
+We applied functions above to clean the corpus. 
+
+```{r}
+#make DocumentTermMatrix with the cleaned corpus
+dtm <- DocumentTermMatrix(corpus)
+```
+
+After putting into corpus, the vectorized narrative column was turned into a document term matrix. 
+
+```{r}
+#create a dataframe with Product column and dtm 
+#make the DocumentTermMatrix as dataframe --> this only contains Narrative information as dtm. 
+mydtm <- as.data.frame(as.matrix(dtm))
+#select Product information --> this is already in the dataframe format. 
+myproduct <- select(V_df, Product) 
+#combine these two by cbind --> we don't need to use merge function because these two are in the same order. 
+mydf <- cbind(myproduct, mydtm)
+
+mydf[1:10, 1:9]
+```
+
+As our final data frame to run classification models, we created a data frame with the document term matrix and the product column. We converted the dtm into a data frame format, and combined it with the data frame with the product category information. Our final data frame ("mydf") includes the row that indicates each narraitve, the "Product" column that indicates which product category the narrative was assigned to, other columns each with words and the cells as the frequency that each word appeared in the narrative. 
+
+```{r}
+#Start Classification
+
+#mydf$Product is already factor 
+set.seed(20191220)
+intrain <- createDataPartition(y = mydf$Product, p = 0.8, list = FALSE)
+training <- mydf[intrain, ]
+testing <- mydf[-intrain, ]
+```
+We conducted train-test-split prior to running to classification model. 
+For our classification, we selected the following models: 
+1. Linear Probability Model 
+2. Logistic Regression 
+3. Penalized Logistic Regression
+4. Discriminant Analysis (LDA)
+5. QDA
+
+In our classification model, our independent variable is the frequency of words "account", "deposit", and "direct" that appear in each narrative, and our dependent variable is a binary classification of whether the narrative gets assigned to "C_S" (checking or savings account). The three words that seems to be highly related to the checking and savings account issue were chosen. 
+
+## Linear Probability Model 
+
+```{r}
+#Binary Classification via a Linear Probability Model
+ols <- lm(Product == "C_S" ~ account + deposit + direct, data = training)
+
+y_hat_ols <- predict(ols, newdata = testing)
+
+Y_yesno <- factor(y_hat_ols > 0.5, levels = c(TRUE, FALSE), labels = c("C_S", "M"))
+
+table(Y_yesno, testing$Product)
+```
+
+#calculated accuracy based on the table
+Accuracy = (122+353)/(122+37+165+353)
+[1] 0.7016248
+
+Based on the table above, the accuracy score of the LPM model is 0.70. 
+
+```{r}
+#Binary classification via logistic regression
+logit <- glm(Product == "C_S" ~ account + deposit + direct, data = training, family = binomial(link = "logit"))
+#--> generalized linear model
+y_hat_logit <- predict(logit, newdata = testing, type = "response") # these are probabilities
+# these are classifications
+z_logit <- factor(y_hat_logit > 0.5, levels = c(TRUE, FALSE), labels = c("C_S", "M")) 
+table(z_logit, testing$Product)
+```
+
+Accuracy = (163+335)/(163+55+124+335)
+[1] 0.7355982
+
+Based on the table above, the accuracy score of the logistic regression model is 0.735. 
+
+```{r}
+#get a penalized version
+ctrl <- trainControl(method = "repeatedcv", repeats = 3, 
+                     classProbs = TRUE, summaryFunction = twoClassSummary)
+
+tune_grid <- expand.grid(.alpha = seq(0, 1, length.out = 10),
+                         .lambda = seq(0, 1, length.out = 10))
+
+penalized_logit <- train(Product ~ account + deposit + direct, data = training, method = "glmnet", 
+                         trControl = ctrl, metric = "ROC", tuneGrid = tune_grid,
+                         preProcess = c("center", "scale"))
+
+#y_hat_penalized_logit <- predict(penalized_logit, newdata = testing, type = "prob")$yes
+# above are probabilities, below are classifications
+z <- predict(penalized_logit, newdata = testing) 
+defaultSummary(data.frame(obs = testing$Product, pred = z))
+```
+
+```{r}
+#LDA version
+LDA <- train(Product ~ account + deposit + direct, 
+             data = training, method = "lda", preProcess = c("center", "scale"))
+confusionMatrix(predict(LDA, newdata = testing), reference = testing$Product)
+```
+```{r}
+#QDA Version
+QDA <- train(Product ~ account + deposit + direct, 
+             data = training, method = "qda", preProcess = c("center", "scale"))
+confusionMatrix(predict(QDA, newdata = testing), reference = testing$Product)
+```
+
+Among all the classification models, the unpenalized logistic regression model had the highest accuracy score
+of 0.735. 
+
+# Conclusion 
+
+Through this project, we were able to drive some useful insights that IBM can leverage to improve their customer experiences management. First, through text analysis and sentiment analysis, we were able to assign negative sentiment scores for each complaint, and from that information attain the mean negative sentiment score by state, product category and company. We learned that some states, like North Dakota, showed higher negative sentiments in their complaints compared to other states. We wanted to explore further if such differences in the intensity of negative sentiments can be attributed to other factors such as the income level of the state. However, it turned out that there was no significant pattern between state income level and the negative sentiment score. But the limitation of this approach is that we did not have the income level data from the IBM data set, but instead we attained from other sources, so the information may not be accurate (This is because not everyone in the state is submitting the complaints to IBM). With the sentiment analysis information, we attained useful insights about which product category, company or states are demonstrating higher levels of customer dissatisfaction. We also utilized the topic modeling approach to see if the narratives can be assigned to 5 different topics. Based on the top words that fall into each topic with high probabilities, we were able to make assumptions about how each topic can symbolize different product categories. Based on the different words that are mentioned frequently in the complaints, we were trying to see if the narratives can be automatically assigned to the corresponding product categories. From this idea, we decided to run classification models to see if we can predict product category based on the text analysis of the narratives. We ran different classification models, which all returned a decently high accuracy score of around 0.70. For the efficiency of creating models and computation, we selected only two product categories as the dependent variables, and the frequency of three words as independent variables. Howevever, if we had the opportunity to further explore on this topic, we would like to include other variables or try with other classification models such as random forests to see if we can improve the accuracy score. 

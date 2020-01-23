@@ -1,0 +1,157 @@
+---
+title: "Analysis of Scottish Witchcraft data with SQL"
+author: Hyunyoung Shin
+date: 2019-12-27
+always_allow_html: yes
+output: 
+  html_document:
+    keep_md: true
+---
+
+Analysis of Scottish Witchcraft data with SQL
+===========================================
+```{r}
+#Connect to the database
+library(DBI)
+witch_con <- dbConnect(
+  RMySQL::MySQL(),
+  user = 'student',
+  password = 'mds-is-fun',
+  dbname = 'witchcraft',
+  host = 'tbrambor.csbmzoea3lu9.us-east-1.rds.amazonaws.com',
+  port = 3306
+)
+```
+
+<Data description>
+This data is from a project on "Scottish Witchcraft" and about people known to have been accused of withchcraft in early modern Scotland. Information includes Where and when they were accused, how they were tried, what their fate was, etc. (based on MySQL database hosted on Amazon Web Services)
+
+>Julian Goodare, Lauren Martin, Joyce Miller and Louise Yeoman, ‘The Survey of Scottish Witchcraft’, http://www.shca.ed.ac.uk/Research/witches/) 
+
+#### 1. Getting to know the data
+
+#a) A list of the tables included in the database.  
+```{sql, connection = "witch_con"}
+SHOW TABLES;
+```
+
+#b) The column names for the table `accused`. 
+```{sql, connection = "witch_con"}
+DESCRIBE accused;
+```
+
+#c) The number of people included in the accused table.
+```{sql, connection = "witch_con"}
+SELECT COUNT(*) 
+FROM accused;
+```
+
+#d) The columns `firstname`, `sex`, and `age` for 5 cases in the `accused` table.  
+```{sql, connection = "witch_con"}
+SELECT firstname, sex, age 
+FROM accused LIMIT 5;
+```
+
+#e) Count the number of nonmissing values for age in the data.  
+```{sql, connection = "witch_con"}
+SELECT COUNT(age) 
+FROM accused
+WHERE age IS NOT NULL 
+```
+
+#f) A list of unique `occupation`s.
+```{sql, connection = "witch_con"}
+SELECT DISTINCT occupation 
+FROM accused
+WHERE occupation IS NOT NULL
+```
+
+#### 2. Seeing the Devil
+
+Some appearances of the devil in the `devilappearance` table.
+
+```{sql, connection = "witch_con"}
+DESCRIBE devilappearance;
+```
+
+a) List the unique `devil_type`s in the data.  
+```{sql, connection = "witch_con"}
+SELECT DISTINCT devil_type
+FROM devilappearance
+WHERE devil_type IS NOT NULL
+```
+
+b) The number of the sightings that mentioned the word "black" in the description in devil_text column.
+
+```{sql, connection = "witch_con"}
+SELECT COUNT(devil_text)
+FROM devilappearance
+WHERE devil_text LIKE '%black%';
+```
+
+c) The proportion of the devils (in `devil_type`) that are male.
+```{sql, connection = "witch_con"}
+SELECT COUNT(*)/ (SELECT COUNT(*) FROM devilappearance) * 100
+AS "Percentage"
+FROM devilappearance
+WHERE devil_type = 'male' 
+
+```
+
+#### 3. The trial
+
+The information on the `trial`.
+
+```{sql, connection = "witch_con"}
+DESCRIBE trial;
+```
+
+a) The average and maximum numbers of male and female accusers.
+```{sql, connection = "witch_con"}
+SELECT AVG(female_accusers), MAX(female_accusers), AVG(male_accusers), MAX(male_accusers)
+FROM trial;
+```
+
+b) The number of 'sentence's by sentence type, in descending order, excluding missing values. 
+```{sql, connection = "witch_con"}
+SELECT sentence AS 'Sentence_Type', COUNT(sentence) AS 'Number'
+FROM trial
+WHERE sentence IS NOT NULL
+GROUP BY sentence
+ORDER BY COUNT(sentence) DESC;
+```
+
+c) Compare the average number of accusers by the type of verdict. 
+
+```{sql, connection = "witch_con"}
+SELECT verdict AS 'Type of Verdict', COUNT(verdict) AS 'number of verdict', AVG(female_accusers + male_accusers) AS 'avg number of accusers' 
+FROM trial
+WHERE verdict IS NOT NULL
+GROUP BY verdict
+ORDER BY COUNT(verdict) DESC;
+```
+
+#### 4. Tortured Truth 
+
+a) The share of trials that the database record confessions
+
+```{sql, connection = "witch_con"}
+SELECT COUNT(trial.trialref) AS 'number of all trials',
+COUNT(confession.trialref) AS 'number of confessions',
+COUNT(confession.trialref)/COUNT(trial.trialref) * 100 AS 'Share of trials with confessions'
+FROM trial
+LEFT JOIN confession ON trial.trialref = confession.trialref
+```
+
+b) Compare the share of confession among trials with records of torture and trials without such records 
+
+```{sql, connection = "witch_con"}
+SELECT 
+CASE WHEN tortureexists IS NULL THEN 'no torture' ELSE 'torture' END AS 'Cases',
+COUNT(confession.trialref)/COUNT(trial.trialref) * 100 AS 'Share of trials with confessions recorded'
+FROM trial
+LEFT JOIN confession ON trial.trialref = confession.trialref
+LEFT JOIN torture ON trial.trialref = torture.trialref
+GROUP BY tortureexists
+```
+
