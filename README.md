@@ -1,5 +1,6 @@
 # Projects
 
-IBM_CustomerComplaints.Rmd is conducted with Sentiment Analysis and Machine Learning Classification Models. 
+IBM_CustomerComplaints.Rmd : Sentiment Analysis and Classification of Customer Complaints from IBM (Team Project)
+
 
 
